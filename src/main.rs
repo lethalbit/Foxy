@@ -131,14 +131,40 @@ impl<'a> FoxyFS<'a> {
         })
     }
 
-    fn _get_proc(&mut self, req: &fuser::Request<'_>) -> Option<ProcInfo> {
-        if let Some(proc) = self
-            .sys_info
-            .blocking_lock()
-            .process(Pid::from_u32(req.pid()))
-        {
+    fn _get_proc(&mut self, raw_pid: u32) -> Option<ProcInfo> {
+        if raw_pid == 0 {
+            return None;
+        }
+
+        let mut info = self.sys_info.blocking_lock();
+        let pid = Pid::from_u32(raw_pid);
+
+        let proc = if let Some(proc) = info.process(pid) {
+            Some(proc)
+        } else {
+            if info.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                true,
+                ProcessRefreshKind::everything()
+                    .without_cpu()
+                    .without_memory()
+                    .without_user()
+                    .without_tasks()
+                    .without_root()
+                    .without_cwd()
+                    .without_environ()
+                    .without_cmd()
+                    .without_disk_usage(),
+            ) == 0
+            {
+                return None;
+            }
+            info.process(pid)
+        };
+
+        if let Some(proc) = proc {
             return Some(ProcInfo {
-                pid: req.pid(),
+                pid: raw_pid,
                 exe: proc.exe().map(|exe| {
                     let mut exe_path = PathBuf::new();
                     exe_path.push(exe);
@@ -161,13 +187,13 @@ impl Filesystem for FoxyFS<'_> {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEntry,
     ) {
-        event!(Level::DEBUG, parent, ?name, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
     #[instrument(skip(self, req))]
     fn forget(&mut self, req: &fuser::Request<'_>, ino: u64, nlookup: u64) {
-        event!(Level::DEBUG, ino, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, proc = ?self._get_proc(req.pid()));
     }
 
     #[instrument(skip_all)]
@@ -178,7 +204,7 @@ impl Filesystem for FoxyFS<'_> {
         fh: Option<u64>,
         reply: fuser::ReplyAttr,
     ) {
-        event!(Level::INFO, ino, fh, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, proc = ?self._get_proc(req.pid()));
         reply.attr(&FS_TTL, &self.backing_attrs);
     }
 
@@ -203,7 +229,7 @@ impl Filesystem for FoxyFS<'_> {
     ) {
         event!(
             Level::INFO,
-            ino, mode, uid, gid, size, ?atime, ?mtime, ?ctime, fh, ?crtime, ?chgtime, ?bkuptime, flags, proc = ?self._get_proc(req)
+            ino, mode, uid, gid, size, ?atime, ?mtime, ?ctime, fh, ?crtime, ?chgtime, ?bkuptime, flags, proc = ?self._get_proc(req.pid())
         );
 
         warn!("TODO: Not Implemented");
@@ -213,7 +239,7 @@ impl Filesystem for FoxyFS<'_> {
 
     #[instrument(skip_all)]
     fn readlink(&mut self, req: &fuser::Request<'_>, ino: u64, reply: fuser::ReplyData) {
-        event!(Level::DEBUG, ino, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -228,7 +254,7 @@ impl Filesystem for FoxyFS<'_> {
         rdev: u32,
         reply: fuser::ReplyEntry,
     ) {
-        event!(Level::DEBUG, parent, ?name, mode, umask, rdev, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, mode, umask, rdev, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -242,7 +268,7 @@ impl Filesystem for FoxyFS<'_> {
         umask: u32,
         reply: fuser::ReplyEntry,
     ) {
-        event!(Level::DEBUG, parent, ?name, mode, umask, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, mode, umask, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -254,7 +280,7 @@ impl Filesystem for FoxyFS<'_> {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::DEBUG, parent, ?name, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -266,7 +292,7 @@ impl Filesystem for FoxyFS<'_> {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::DEBUG, parent, ?name, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -279,7 +305,7 @@ impl Filesystem for FoxyFS<'_> {
         target: &Path,
         reply: fuser::ReplyEntry,
     ) {
-        event!(Level::DEBUG, parent, ?link_name, ?target, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?link_name, ?target, proc = ?self._get_proc(req.pid()));
         reply.error(EPERM);
     }
 
@@ -294,7 +320,7 @@ impl Filesystem for FoxyFS<'_> {
         flags: u32,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::DEBUG, parent, ?name, newparent, ?newname, flags, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, newparent, ?newname, flags, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -307,13 +333,13 @@ impl Filesystem for FoxyFS<'_> {
         newname: &std::ffi::OsStr,
         reply: fuser::ReplyEntry,
     ) {
-        event!(Level::DEBUG, ino, newparent, ?newname, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, newparent, ?newname, proc = ?self._get_proc(req.pid()));
         reply.error(EPERM);
     }
 
     #[instrument(skip_all)]
     fn open(&mut self, req: &fuser::Request<'_>, ino: u64, flags: i32, reply: fuser::ReplyOpen) {
-        event!(Level::INFO, ino, flags, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, flags, proc = ?self._get_proc(req.pid()));
 
         // "Open" the file
         self.open = true;
@@ -333,7 +359,7 @@ impl Filesystem for FoxyFS<'_> {
         lock_owner: Option<u64>,
         reply: fuser::ReplyData,
     ) {
-        event!(Level::INFO, ino, fh, offset, size, flags, lock_owner, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, offset, size, flags, lock_owner, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -383,7 +409,7 @@ impl Filesystem for FoxyFS<'_> {
         lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
-        event!(Level::INFO, ino, fh, offset, data, write_flags, flags, lock_owner, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, offset, data, write_flags, flags, lock_owner, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -422,7 +448,7 @@ impl Filesystem for FoxyFS<'_> {
         lock_owner: u64,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, fh, lock_owner, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, lock_owner, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -449,7 +475,7 @@ impl Filesystem for FoxyFS<'_> {
         flush: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, fh, flags, lock_owner, flush, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, flags, lock_owner, flush, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -475,7 +501,7 @@ impl Filesystem for FoxyFS<'_> {
         datasync: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, fh, datasync, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, datasync, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -493,7 +519,7 @@ impl Filesystem for FoxyFS<'_> {
 
     #[instrument(skip_all)]
     fn opendir(&mut self, req: &fuser::Request<'_>, ino: u64, flags: i32, reply: fuser::ReplyOpen) {
-        event!(Level::DEBUG, ino, flags, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, flags, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -506,7 +532,7 @@ impl Filesystem for FoxyFS<'_> {
         offset: i64,
         reply: fuser::ReplyDirectory,
     ) {
-        event!(Level::DEBUG, ino, fh, offset, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, fh, offset, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -519,7 +545,7 @@ impl Filesystem for FoxyFS<'_> {
         offset: i64,
         reply: fuser::ReplyDirectoryPlus,
     ) {
-        event!(Level::DEBUG, ino, fh, offset, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, fh, offset, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -532,7 +558,7 @@ impl Filesystem for FoxyFS<'_> {
         flags: i32,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::DEBUG, ino, fh, flags, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, fh, flags, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -545,13 +571,13 @@ impl Filesystem for FoxyFS<'_> {
         datasync: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::DEBUG, ino, fh, datasync, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, fh, datasync, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
     #[instrument(skip_all)]
     fn statfs(&mut self, req: &fuser::Request<'_>, ino: u64, reply: fuser::ReplyStatfs) {
-        event!(Level::DEBUG, ino, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -566,7 +592,7 @@ impl Filesystem for FoxyFS<'_> {
         position: u32,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, ?name, value, flags, position, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, ?name, value, flags, position, proc = ?self._get_proc(req.pid()));
 
         warn!("TODO: Not Implemented");
 
@@ -582,7 +608,7 @@ impl Filesystem for FoxyFS<'_> {
         size: u32,
         reply: fuser::ReplyXattr,
     ) {
-        event!(Level::INFO, ino, ?name, size, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, ?name, size, proc = ?self._get_proc(req.pid()));
 
         warn!("TODO: Not Implemented");
 
@@ -597,7 +623,7 @@ impl Filesystem for FoxyFS<'_> {
         size: u32,
         reply: fuser::ReplyXattr,
     ) {
-        event!(Level::INFO, ino, size, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, size, proc = ?self._get_proc(req.pid()));
 
         warn!("TODO: Not Implemented");
 
@@ -612,7 +638,7 @@ impl Filesystem for FoxyFS<'_> {
         name: &std::ffi::OsStr,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, ?name, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, ?name, proc = ?self._get_proc(req.pid()));
 
         warn!("TODO: Not Implemented");
 
@@ -621,7 +647,7 @@ impl Filesystem for FoxyFS<'_> {
 
     #[instrument(skip_all)]
     fn access(&mut self, req: &fuser::Request<'_>, ino: u64, mask: i32, reply: fuser::ReplyEmpty) {
-        event!(Level::INFO, ino, mask, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, mask, proc = ?self._get_proc(req.pid()));
         // Yeah, sure, everyone can access it, why not
         reply.ok();
     }
@@ -637,7 +663,7 @@ impl Filesystem for FoxyFS<'_> {
         flags: i32,
         reply: fuser::ReplyCreate,
     ) {
-        event!(Level::DEBUG, parent, ?name, mode, umask, flags, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, parent, ?name, mode, umask, flags, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -654,7 +680,7 @@ impl Filesystem for FoxyFS<'_> {
         pid: u32,
         reply: fuser::ReplyLock,
     ) {
-        event!(Level::INFO, ino, fh, lock_owner, start, end, typ, pid, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, lock_owner, start, end, typ, pid, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -684,7 +710,7 @@ impl Filesystem for FoxyFS<'_> {
         sleep: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, fh, lock_owner, start, end, typ, pid, sleep, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, lock_owner, start, end, typ, pid, sleep, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -709,7 +735,7 @@ impl Filesystem for FoxyFS<'_> {
         idx: u64,
         reply: fuser::ReplyBmap,
     ) {
-        event!(Level::DEBUG, ino, blocksize, idx, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, blocksize, idx, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 
@@ -725,7 +751,7 @@ impl Filesystem for FoxyFS<'_> {
         out_size: u32,
         reply: fuser::ReplyIoctl,
     ) {
-        event!(Level::DEBUG, ino, fh, flags, cmd, in_data, out_size, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino, fh, flags, cmd, in_data, out_size, proc = ?self._get_proc(req.pid()));
 
         warn!("ioctl???");
 
@@ -743,7 +769,7 @@ impl Filesystem for FoxyFS<'_> {
         mode: i32,
         reply: fuser::ReplyEmpty,
     ) {
-        event!(Level::INFO, ino, fh, offset, length, mode, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, offset, length, mode, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -769,7 +795,7 @@ impl Filesystem for FoxyFS<'_> {
         whence: i32,
         reply: fuser::ReplyLseek,
     ) {
-        event!(Level::INFO, ino, fh, offset, whence, proc = ?self._get_proc(req));
+        event!(Level::INFO, ino, fh, offset, whence, proc = ?self._get_proc(req.pid()));
 
         if !self.open || fh != FOXY_FH {
             warn!(
@@ -799,7 +825,7 @@ impl Filesystem for FoxyFS<'_> {
         flags: u32,
         reply: fuser::ReplyWrite,
     ) {
-        event!(Level::DEBUG, ino_in, fh_in, offset_in, ino_out, fh_out, offset_out, len, flags, proc = ?self._get_proc(req));
+        event!(Level::DEBUG, ino_in, fh_in, offset_in, ino_out, fh_out, offset_out, len, flags, proc = ?self._get_proc(req.pid()));
         reply.error(ENOSYS);
     }
 }
@@ -894,19 +920,6 @@ async fn main() -> eyre::Result<()> {
         )))
     });
 
-    // TODO(aki): Horribly broken, no idea why
-    //     let sys_update = tokio::spawn(async {
-    //         let sys_info = SYS_INFO.get().unwrap().clone();
-    //
-    //         loop {
-    //             tokio::time::sleep(Duration::from_secs(1)).await;
-    //
-    //             let mut lock = sys_info.lock().await;
-    //
-    //             (*lock).refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    //         }
-    //     });
-
     tokio::task::spawn_blocking(move || {
         fuser::mount2(
             FoxyFS::new(backing.as_path(), cow.as_deref()).unwrap(),
@@ -916,9 +929,6 @@ async fn main() -> eyre::Result<()> {
         .unwrap();
     })
     .await?;
-
-    // Kill the sys-info update task
-    // sys_update.abort();
 
     Ok(())
 }
