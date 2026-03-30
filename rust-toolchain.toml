@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+[toolchain]
+channel    = "stable"
+components = [
+	"rustc", "cargo", "rustfmt", "clippy", "rust-analyzer",
+]

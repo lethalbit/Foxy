@@ -1,0 +1,32 @@
+[package]
+name        = "foxy"
+version     = "0.1.0"
+edition     = "2024"
+readme      = "README.md"
+license     = "BSD-3-Clause"
+repository  = "https://codeberg.org/lethalbit/Foxy"
+description = "FUSE-base file proxy with CoW capabilities"
+
+[dependencies]
+clap               = { version = "4.6" }
+color-eyre         = { version = "0.6" }
+color-print        = { version = "0.3" }
+console-subscriber = { version = "0.5" }
+eyre               = { version = "0.6" }
+fuser              = { version = "0.17" }
+libc               = { version = "0.2" }
+memmap2            = { version = "0.9" }
+sysinfo            = { version = "0.38" }
+tokio              = { version = "1.50", features = ["rt", "rt-multi-thread", "time", "macros", "sync", "signal", "tracing"] }
+tokio-util         = { version = "0.7", features = ["rt", "time", "tracing"] }
+tracing            = { version = "0.1", features = ["async-await"] }
+tracing-error      = { version = "0.2", features = ["traced-error"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi", "registry", "json"] }
+
+[lints.clippy]
+allow_attributes_without_reason = "warn"
+cast_lossless                   = "warn"
+use_self                        = "warn"
+wildcard_dependencies           = "warn"
+unwrap_used                     = "deny"
+expect_used                     = "deny"
